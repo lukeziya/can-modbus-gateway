@@ -1,7 +1,7 @@
 # Elektrotehnički fakultet Banja Luka
 ## Industrijske komunikacione mreže
 
-### Projektni zadatak - Tema 2: Realizacija CAN-Modbus RTU gejtveja na Raspberry Pi platformi
+### Projektni zadatak - Tema: Realizacija CAN-Modbus RTU gejtveja na Raspberry Pi platformi
 
 ---
 
