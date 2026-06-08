@@ -1,2 +1,2 @@
 # can-modbus-gateway
-Развој CAN-Modbus RTU гејтвеја на Raspberry Pi платформи за индустријске комуникационе мреже. Пројекат обухвата мапирање 29-битног CAN ID-а у Modbus команде за управљање релејним индустријским модулом, комплетан изворни код у Python-у и упутство за тестирање.
+Razvoj CAN-Modbus RTU gejtveja na Raspberry Pi platformi u C jeziku. Projekat obuhvata mapiranje 29-bitnog CAN ID-a u Modbus komande preko Linux SocketCAN-a i termios interfejsa za upravljanje relejnim modulom (IKM Labs).
