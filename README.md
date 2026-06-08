@@ -3,55 +3,103 @@
 
 ### Projektni zadatak: Realizacija CAN-Modbus RTU gejtveja primjenom libmodbus biblioteke
 
----
 
-## 1. Opis projekta i cilj
 
-Cilj ovog projektnog zadatka je realizacija komunikacionog gejtveja (Gateway) koji omogućava transparentno povezivanje i dvosmjernu razmjenu podataka između **CAN magistrale** i **Modbus RTU mreže** korišćenjem Raspberry Pi platforme. 
+## Opis projekta
 
-Program prima proširene (Extended) 29-bitne CAN okvire, iz njihovog identifikatora (ID) izdvaja parametre potrebne za Modbus protokol (adresu uređaja i funkcijski kod), a zatim korišćenjem zvanične **`libmodbus`** biblioteke (obrađene u Laboratorijskoj vježbi 5) izvršava komande nad 4-kanalnim relejnim izlaznim modulom.
+Gejtvej koji prima CAN okvire sa 29-bitnim (EFF) identifikatorom, dekodira Modbus parametre ugrađene u taj identifikator i prosljeđuje odgovarajuće komande Modbus RTU slave uređaju (4-kanalni relejni modul) preko RS-485 magistrale. Odgovor slave uređaja se opciono vraća na CAN magistralu.
 
----
+## Mapiranje CAN ID → Modbus
 
-## 2. Mapiranje CAN i Modbus protokola
+Koristi se 29-bitni Extended Frame Format (EFF) identifikator, čija su polja raspoređena ovako:
 
-S obzirom na to da CAN koristi identifikatore (ID) umjesto adresa uređaja, unutar **29-bitnog CAN ID-a** definisan je aplikativni sloj koji nosi sve informacije za rutiranje prema Modbus mreži:
+```
+ Bit: 28      24 23      16 15       8 7        0
+      [PRIORITET] [MODBUS ADR] [FUNK. KOD] [GW ID]
+        5 bita      8 bita      8 bita     8 bita
+```
 
-* **Bitovi B28 - B24 (5 bita):** Prioritet okvira na CAN magistrali.
-* **Bitovi B23 - B16 (8 bita):** Modbus adresa slave uređaja (čvora).
-* **Bitovi B15 - B08 (8 bita):** Modbus funkcijski kod (FC) (npr. `0x05` za upis stanja releja).
-* **Bitovi B07 - B00 (8 bita):** Identifikator samog gejtveja (Gateway ID).
+CAN payload (4 bajta) nosi Modbus PDU podatke:
 
-### Sadržaj CAN Data polja (Payload):
-* **Bajt 0 i Bajt 1:** Adresa Modbus registra (npr. `0x0000` za Relej 1).
-* **Bajt 2 i Bajt 3:** Vrijednost koja se upisuje (`0xFF00` za uključenje, `0x0000` za isključenje).
+| Bajt | Sadržaj             |
+|------|---------------------|
+| 0    | Adresa registra Hi  |
+| 1    | Adresa registra Lo  |
+| 2    | Vrijednost Hi       |
+| 3    | Vrijednost Lo       |
 
----
+**Primjer** — uključivanje relejnog izlaza #1 (Modbus slave adresa 1, FC=0x05, registar 0x0000):
 
-## 3. Objašnjenje ključnih dijelova koda
+```
+CAN ID: 0x00010500  (prioritet=0, slave=1, FC=05, GW=0)
+Data:   00 00 FF 00  (registar 0x0000, vrijednost 0xFF00 = ON)
+```
 
-Program `gateway.c` se oslanja na sistemske pozive Linux-a za CAN magistralu i `libmodbus` API za serijsku komunikaciju:
+## Podržani funkcijski kodovi
 
-* **`custom_set_rts()` i `modbus_rtu_set_custom_rts()`**
-  Poludupleksni RS485 transiver zahtijeva kontrolu smjera prenosa (slanje/prijem). Prateći tekst Vježbe 5, definisana je korisnička funkcija koja preko Linux `Sysfs` interfejsa kontroliše hardverski RTS pin **GPIO 17**. Kada biblioteka šalje upit, postavlja pin na `1` (slanje), a nakon slanja ga vraća na `0` (prijem).
-  
-* **`modbus_new_rtu()` i `modbus_connect()`**
-  Inicijalizuju Modbus kontekst za serijski port `/dev/ttyAMA0` sa parametrima relejnog modula: brzina 9600 bps, 8 bita podataka, bez parnosti i 1 stop bit (8N1), nakon čega se uspostavlja veza.
+| FC   | Modbus funkcija          | libmodbus poziv           |
+|------|--------------------------|---------------------------|
+| 0x01 | Read Coils               | `modbus_read_bits()`      |
+| 0x03 | Read Holding Registers   | `modbus_read_registers()` |
+| 0x05 | Write Single Coil        | `modbus_write_bit()`      |
+| 0x06 | Write Single Register    | `modbus_write_register()` |
 
-* **`read(can_sock, &frame, ...)`**
-  Blokirajući sistemski poziv koji drži program u stanju čekanja sve dok na CAN magistralu ne stigne novi okvir.
+## Hardverske pretpostavke
 
-* **Bit-shifting i maskiranje (`ext_id >> 16 & 0xFF`)**
-  Operacije kojima se iz pristiglog 29-bitnog CAN ID-a izoluju pojedinačni bajtovi koji predstavljaju adresu slave uređaja i funkcijski kod.
+- CAN kontroler: MCP2515 (via SPI), interfejs `can0`
+- RS-485 transiver: MAX485, smjer se kontroliše GPIO22 (sysfs)
+- UART: `/dev/ttyAMA0`, 9600 8N1
 
-* **`modbus_set_slave()` i `modbus_write_bit()`**
-  Funkcije iz `libmodbus` API-ja. Prva dinamički postavlja adresu uređaja kojem se obraćamo, a druga šalje Modbus komandu (FC=0x05) za izmjenu stanja određenog releja.
+## Kompajliranje
 
----
+Kroskompajliranje za ARM platformu (pretpostavlja se da je libmodbus kroskompajliran u `./usr` prema uputstvu sa Lab5):
 
-## 4. Uputstvo za korišćenje i verifikaciju
+```sh
+arm-linux-gnueabihf-gcc apk.c \
+    -I./usr/include \
+    -L./usr/lib \
+    -lmodbus \
+    -o can-modbus-gateway
+```
 
-### Korak 1: Kroskompajliranje projekta
-Aplikacija se kroskompajlira na razvojnoj mašini uz linkovanje sa prekompajliranom `libmodbus` verzijom iz `usr` foldera (kreiranog prema uputstvu iz vježbe):
-```bash
-arm-linux-gnueabihf-gcc gateway.c -o gateway -I./usr/include/modbus -L./usr/lib -lmodbus
+Prenos na platformu i pokretanje:
+
+```sh
+scp can-modbus-gateway pi@<IP>:~
+scp ./usr/lib/libmodbus.so* pi@<IP>:~/lib
+ssh pi@<IP>
+sudo ip link set can0 up type can bitrate 125000
+LD_LIBRARY_PATH=~/lib ./can-modbus-gateway
+```
+
+## Testiranje
+
+Sa drugog čvora na CAN mreži, slanje komande za uključivanje Relay #1:
+
+```sh
+cansend can0 00010500#0000FF00
+```
+
+Slanje komande za isključivanje Relay #1:
+
+```sh
+cansend can0 00010500#00000000
+```
+
+Praćenje saobraćaja:
+
+```sh
+candump can0
+```
+
+## Struktura koda
+
+- `init_gpio()` — inicijalizacija GPIO22 kao izlaza (sysfs, prema Lab5/Lab7 pristupu)
+- `custom_set_rts()` — callback za libmodbus kojim se kontroliše smjer RS-485 transivera
+- `main()` — inicijalizacija SocketCAN + libmodbus konteksta, glavna petlja gejtveja
+
+## Korištene tehnologije
+
+- **SocketCAN / BSD Sockets API** (Lab7) — prijem i slanje CAN okvira
+- **libmodbus v3.1.11** (Lab5) — Modbus RTU master komunikacija sa relejnim modulom
+- **Linux sysfs GPIO** — kontrola smjera MAX485 transivera
