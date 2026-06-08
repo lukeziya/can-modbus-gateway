@@ -62,7 +62,7 @@ Sistemska arhitektura se oslanja na Raspberry Pi na koji su, prateći metodologi
 
 ---
 
-## 4. Struktura softverskog rješenja (`gateway.c`)
+## 4. Struktura softverskog rješenja (`apk.c`)
 
 Program je napisan u čistom **C jeziku** i oslanja se isključivo na sistemske pozive Linux operativnog sistema, prateći strukturu repozitorijuma sa vježbi:
 * **SocketCAN interfejs (`<linux/can.h>`)**: Koristi se za otvaranje sirovih (raw) mrežnih utičnica preko kojih se primaju i šalju CAN okviri.
@@ -76,4 +76,4 @@ Program je napisan u čistom **C jeziku** i oslanja se isključivo na sistemske 
 ### Korak 1: Inicijalizacija perifernih drajvera na OS nivou
 Prije pokretanja programa, potrebno je osigurati da su u `/boot/firmware/config.txt` aktivirani SPI i UART drajveri za MCP2515. Nakon toga, CAN mrežni interfejs se podiže sledećom komandom:
 ```bash
-sudo ip link set can0 up type can bitrate 250000
+sudo ip link set can0 up type can bitrate 125000
