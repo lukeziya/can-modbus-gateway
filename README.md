@@ -11,10 +11,8 @@ Cilj projektnog zadatka je projektovanj gateway-a koji prima CAN okvire sa 29-bi
 
 ## Izazovi 
 
-Glavni izazov projektnog zadatka je mapiranje adresa i funkcijskih kodova Modbus protokola u prošireni (29-bitnog) CAN ID.  
-## Mapiranje CAN ID → Modbus
-
-Koristi se 29-bitni Extended Frame Format (EFF) identifikator, čija su polja raspoređena ovako:
+Glavni izazov projektnog zadatka je mapiranje adresa i funkcijskih kodova Modbus protokola u prošireni (29-bitni) CAN ID. Potrebno je obratiti pažnju na ono što je neopphodno. Pošto Modbus RTU podržava do 247 slave uređaja za Modbus adresu potreban je 1 bajt. Takođe, funkcijski kodovi su definisani standardom i kako bi se pokrile sve moguće kombinacije za to polje je potreban 1 bajt. Pitanje je kako raspodijeliti ostalih 14 bitova na polje PRIORITY i GATEWAY ID.
+Ova dva polja su fleksibilna po pitanju broja potrebnih bitova. GATEWAY ID predstavlja jedinstveni identifikator samog uređaja u CAN mreži na kojem se vrti data aplikacija. U ovoj realizaciji, kako se bajtovi ne bi "skraćivali", za ovo polje ostavljeno je 8 bitova, što je dovoljno za registrovanje do 256 gateway-a. To je i više nego dovoljan broj za standardnu CAN infrastrukturu. Za polje PRIORITY ostaju rezervisano 5 bitova i omogućeno je da se u isto vrijeme šalju do 32 okvira sa različitim prioritetom. Polja EFF CAN ID-a su raspoređena na sljedeći način:
 
 ```
  Bit: 28      24 23      16 15       8 7        0
