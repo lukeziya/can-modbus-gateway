@@ -1,7 +1,7 @@
 # Elektrotehnički fakultet Banja Luka
 ## Industrijske komunikacione mreže
 
-### Projektni zadatak: Realizacija CAN-Modbus RTU gejtveja primjenom libmodbus biblioteke
+### Projektni zadatak: Realizacija CAN-Modbus RTU gejtveja
 
 
 
