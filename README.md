@@ -7,8 +7,11 @@
 
 ## Opis projekta
 
-Gejtvej koji prima CAN okvire sa 29-bitnim (EFF) identifikatorom, dekodira Modbus parametre ugrađene u taj identifikator i prosljeđuje odgovarajuće komande Modbus RTU slave uređaju (4-kanalni relejni modul) preko RS-485 magistrale. Odgovor slave uređaja se opciono vraća na CAN magistralu.
+Cilj projektnog zadatka je projektovanj gateway-a koji prima CAN okvire sa 29-bitnim (EFF) identifikatorom, dekodira Modbus parametre ugrađene u taj identifikator i prosljeđuje odgovarajuće komande Modbus RTU slave uređaju (4-kanalni relejni modul) preko RS-485 magistrale.
 
+## Izazovi 
+
+Glavni izazov projektnog zadatka je mapiranje adresa i funkcijskih kodova Modbus protokola u prošireni (29-bitnog) CAN ID.  
 ## Mapiranje CAN ID → Modbus
 
 Koristi se 29-bitni Extended Frame Format (EFF) identifikator, čija su polja raspoređena ovako:
