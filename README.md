@@ -29,12 +29,7 @@ CAN payload (4 bajta) nosi Modbus PDU podatke:
 | 2    | Vrijednost Hi       |
 | 3    | Vrijednost Lo       |
 
-**Primjer** — uključivanje relejnog izlaza #1 (Modbus slave adresa 1, FC=0x05, registar 0x0000):
 
-```
-CAN ID: 0x00010500  (prioritet=0, slave=1, FC=05, GW=0)
-Data:   00 00 FF 00  (registar 0x0000, vrijednost 0xFF00 = ON)
-```
 
 ## Podržani funkcijski kodovi
 
@@ -45,62 +40,169 @@ Data:   00 00 FF 00  (registar 0x0000, vrijednost 0xFF00 = ON)
 | 0x05 | Write Single Coil        | `modbus_write_bit()`      |
 | 0x06 | Write Single Register    | `modbus_write_register()` |
 
-## Hardverske pretpostavke
-
-- CAN kontroler: MCP2515 (via SPI), interfejs `can0`
-- RS-485 transiver: MAX485, smjer se kontroliše GPIO22 (sysfs)
-- UART: `/dev/ttyAMA0`, 9600 8N1
-
-## Kompajliranje
-
-Kroskompajliranje za ARM platformu (pretpostavlja se da je libmodbus kroskompajliran u `./usr` prema uputstvu sa Lab5):
+## Ključni segmenti koda
 
 ```sh
-arm-linux-gnueabihf-gcc apk.c \
-    -I./usr/include \
-    -L./usr/lib \
-    -lmodbus \
-    -o can-modbus-gateway
+...
+
+#define CAN_ID_PRIORITY(id)      (((id) >> 24) & 0x1F) // Izoluje 5 bita prioriteta
+#define CAN_ID_MODBUS_ADDR(id)   (((id) >> 16) & 0xFF) // Izoluje 8 bita slave adrese
+#define CAN_ID_FUNCTION_CODE(id) (((id) >>  8) & 0xFF) // Izoluje 8 bita funkcijskog koda
+#define CAN_ID_GATEWAY_ID(id)    (((id)       ) & 0xFF) // Izoluje zadnji bajt (Gateway ID)
+...
 ```
 
-Prenos na platformu i pokretanje:
+Ova četiri makroa obavljaju najvažniju ulogu u aplikaciji. Kako bi iz 29-bitnog CAN ID-a izdvojili prethodno opisana polja potrebno je da ga rasčlanimo na dijelove. Svaki makro izoluje prethodno šiftovan dio CAN ID-a i smiješta ga u prateću promjenljivu koja se koristi za kontrolu Modbus RTU slave uređaja.
+
+
+## Kontrola smijera RS-485 linije
+
+Pošto je RS-485 poludupleksni medij, softver mora precizno upravljati DE/RE pinovima transivera (preko sysfs GPIO22 interfejsa). Funkcija se registruje unutar libmodbus biblioteke i automatski prebacuje hardver u mod slanja/prijema:
 
 ```sh
-scp can-modbus-gateway pi@<IP>:~
-scp ./usr/lib/libmodbus.so* pi@<IP>:~/lib
-ssh pi@<IP>
+...
+
+static void custom_set_rts(modbus_t *ctx, int on)
+{
+    int fd = open("/sys/class/gpio/gpio22/value", O_WRONLY);
+    if (fd >= 0) {
+        // Ako je on=1 podiže se linija za predaju, ako je on=0 spušta se za prijem
+        write(fd, on ? "1" : "0", 1);
+        close(fd);
+    }
+    usleep(2000); // Kratka pauza za hardversku stabilizaciju napona na liniji
+}
+...
+```
+
+## Reaktivna petlja i izvršavanje komandi
+
+Srce gejtveja predstavlja `switch-case` arhitektura unutar glavne petlje koja na osnovu dekodiranog funkcijskog koda `fc` poziva odgovarajući libmodbus API:
+```sh
+...
+
+modbus_set_slave(ctx, modbus_addr);
+
+        int ret = -1;
+        switch (fc) {
+            case 0x01: {
+                /* FC01: Citanje coils (digitalnih izlaza) */
+                uint8_t bits[8];
+                ret = modbus_read_bits(ctx, reg_addr, reg_value, bits);
+                if (ret > 0) {
+                    printf("[Modbus] FC01: procitano %d coil(s), prvi=0x%02X\n", ret, bits[0]);
+
+                    struct can_frame resp;
+                    resp.can_id  = frame.can_id; 
+                    resp.can_dlc = (ret > 8) ? 8 : ret;
+                    int i;
+                    for (i = 0; i < resp.can_dlc; i++)
+                        resp.data[i] = bits[i];
+                    write(can_sock, &resp, sizeof(struct can_frame));
+                }
+                break;
+            }
+            case 0x05:
+               
+                ret = modbus_write_bit(ctx, reg_addr, (reg_value != 0) ? 1 : 0);
+                if (ret == 1)
+                    printf("[Modbus] FC05: Coil 0x%04X postavljen na %d.\n",
+                           reg_addr, (reg_value != 0) ? 1 : 0);
+                break;
+
+            case 0x06:
+                /* FC06: Pisanje jednog holding registra */
+                ret = modbus_write_register(ctx, reg_addr, reg_value);
+                if (ret == 1)
+                    printf("[Modbus] FC06: Registar 0x%04X postavljen na 0x%04X.\n",
+                           reg_addr, reg_value);
+                break;
+
+            case 0x03: {
+                /* FC03: Citanje holding registara */
+                uint16_t regs[8];
+                ret = modbus_read_registers(ctx, reg_addr, reg_value, regs);
+                if (ret > 0) {
+                    printf("[Modbus] FC03: procitano %d registar(a), prvi=0x%04X\n", ret, regs[0]);
+                    struct can_frame resp;
+                    resp.can_id  = frame.can_id;
+                    int n = (ret > 4) ? 4 : ret;
+                    resp.can_dlc = n * 2;
+                    int i;
+                    for (i = 0; i < n; i++) {
+                        resp.data[i * 2]     = (regs[i] >> 8) & 0xFF;
+                        resp.data[i * 2 + 1] = regs[i] & 0xFF;
+                    }
+                    write(can_sock, &resp, sizeof(struct can_frame));
+                }
+                break;
+            }
+...
+```
+## Priprema za pokretanje aplikacije
+
+Kakko bi sve funkcionisalo kako treba potrebno je povezati dva Raspberry Pi-a na jednu CAN magistralu. U ovom slučaju korišćeni su RS-485 CAN HAT-ovi gdje su CAN_H i CAN_L linije spojene paralelno. Pošto je u pitanju gateway, on će da radi samo na jednom uređaju te je na njega potrebno spojiti Modbus RTU slave čvor. Njega spajamo na A i B kontakte na RS-485 HAT-u. Dakle sa jedne strane gateway-a je jedan uređaj u CAN magistrali sa kojeg šaljemo CAN okvire, dok je sa druge strane Modbus slave uređaj koji preko gatway-a prima odogovarajuće poruke i izvršava zadate funkcije, te vraća potvrdu istim putem.
+## Konfiguracija i podizanje interfejsa
+
+Na ciljnoj platformi potrebno je (uz pretpostavku da je interfejs inicijalizovan) podignuti link za can0 sljedećom komandom:
+
+```sh
 sudo ip link set can0 up type can bitrate 125000
-LD_LIBRARY_PATH=~/lib ./can-modbus-gateway
 ```
+Nakon toga interfejs je aktivan i može se pristupiti pokretanju aplikacije.
 
-## Testiranje
+> [!NOTE]
+> Moguće da će biti potrebno aplikaciju na ciljnoj platformi pokrenuti sa `sudo` privilegijama kako bi se pristupilo Modbus RTU mreži!
 
-Sa drugog čvora na CAN mreži, slanje komande za uključivanje Relay #1:
+## Očekivani rad aplikacije 
+
+Nakon što je gateway pokrenut i sluša saobraćaj na `can0` i nakon što je hardver spojen, pristupa se slanju sirovih okvira pomoću standardnih `can-utils` alata sa drugog čvora u mreži. Na jednom uređaju preko `candump` alata se može pratiti tok poruka, dok će gateway ispisivati prevod.
+
+### Primjer 1: Uključivanje Releja #0
+Želimo da pošaljemo komandu uređaju da na adresi 1, funkcijskim kodom `0x05` na prvi registar `0x0000`. Ciljani prioritet je `5` (nije toliko važno jer se šalje samo jedan zahtjev), a Gateway Id je `0x10` (isto nije od pretjerane važnosti jer su samo 2 uređaja na CAN magistrali). CAN ID u završnici ima oblik `0x05010510`. Poruka se šalje sa uređaja koji je samo spojen na magistralu, ne i na slave uređaj.
+
 
 ```sh
-cansend can0 00010500#0000FF00
-```
+cansend can0 05010510#0000FF00
 
-Slanje komande za isključivanje Relay #1:
+```
+Payload, `0000FF00` predstavlja podatke poslate u ovoj poruci i sačinjen je od 2 dijela. Prvi dio `0x0000` je adresa prvog releja na pločici, dok je drugi dio `oxFF00` kombinacija za paljenje adresiranog registra.
+Očekivani ispis na gateway terminalu izgleda ovako:
 
 ```sh
-cansend can0 00010500#00000000
-```
+[CAN -> Modbus] EXT ID=0x05010510 | GW=16 Slave=1 FC=0x05 Reg=0x0000 Val=0xFF00
+[Modbus] FC05: Coil 0x0000 postavljen na 0.
 
-Praćenje saobraćaja:
+```
+što nam govori sve potrebne podatke o uspješnosti poruke koja je poslata.
+
+Isključivanje releja funkcioniše na sličan način, gdje se u poruci mijenjaju samo posljednja dva bajta:
+```sh
+cansend can0 05010510#00000000
+
+```
+### Primjer 2: Upis podatka u registar #1
+Ukoliko želimo da upišemo neki podatak u registar, mijenja se pored adrese i samog podatka koji se upisuj samo funkcijski kod:
+```sh
+cansend can0 05010610#00010001
+
+```
+Dakle u CAN ID je samo promjenjen funkcijski kod sa `0x05` u `0x06` i podatak koji se upisuje u registar `0x0001` je `0x0001`. Na gateway-u dobija se sljedeći ispis:
 
 ```sh
-candump can0
+[CAN -> Modbus] EXT ID=0x05010610 | GW=16 Slave=1 FC=0x06 Reg=0x0001 Val=0x0001
+[Modbus] FC06: Registar 0x0001 postavljen na 0x0001.
+
 ```
 
-## Struktura koda
 
-- `init_gpio()` — inicijalizacija GPIO22 kao izlaza (sysfs, prema Lab5/Lab7 pristupu)
-- `custom_set_rts()` — callback za libmodbus kojim se kontroliše smjer RS-485 transivera
-- `main()` — inicijalizacija SocketCAN + libmodbus konteksta, glavna petlja gejtveja
 
-## Korištene tehnologije
 
-- **SocketCAN / BSD Sockets API** (Lab7) — prijem i slanje CAN okvira
-- **libmodbus v3.1.11** (Lab5) — Modbus RTU master komunikacija sa relejnim modulom
-- **Linux sysfs GPIO** — kontrola smjera MAX485 transivera
+
+
+
+
+
+
+
+
