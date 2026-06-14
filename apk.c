@@ -22,8 +22,11 @@
 #define MODBUS_DATABITS 8
 #define MODBUS_STOPBITS 1
 
-
-
+#define CAN_ID_PRIORITY(id)	  (((id) >> 24) & 0x1F) // Izoluje prvih 5 bita prioriteta
+#define CAN_ID_MODBUS_ADDR(id)    (((id) >> 16) & 0xFF) // Izoluje 8 bita slave adrese
+#define CAN_ID_FUNCTION_CODE(id)  (((id) >>  8) & 0xFF) // Izoluje 8 bita funkcijskog koda
+#define CAN_ID_GATEWAY_ID(id)	  (((id)      ) & 0xFF) //Izoluje zadnji bajt (Gateway ID)
+ 
 #define MIN_CAN_PAYLOAD 4
 
 /* -----------------------------------------------------------------------
@@ -48,7 +51,7 @@ static void init_gpio(void)
 }
 
 /* -----------------------------------------------------------------------
- * Korisnicka funkcija za kontrolu smjera RS-485 transivera.
+ * Funkcija za kontrolu smjera RS-485 transivera.
  * Registruje se sa modbus_rtu_set_custom_rts() 
  * ----------------------------------------------------------------------- */
 static void custom_set_rts(modbus_t *ctx, int on)
@@ -77,8 +80,8 @@ int main(void)
  
     init_gpio();
 
-    ctx = modbus_new_rtu(UART_PORT, MODBUS_BAUDRATE, MODBUS_PARITY,
-                         MODBUS_DATABITS, MODBUS_STOPBITS);
+    ctx = modbus_new_rtu(UART_PORT, MODBUS_BAUDRATE, MODBUS_PARITY, MODBUS_DATABITS, MODBUS_STOPBITS);
+    
     if (ctx == NULL) {
         fprintf(stderr, "Greska: Nije moguce kreirati libmodbus kontekst!\n");
         return -1;
@@ -94,7 +97,6 @@ int main(void)
         return -1;
     }
 
- 
     can_sock = socket(PF_CAN, SOCK_RAW, CAN_RAW);
     if (can_sock < 0) {
         perror("Greska pri otvaranju CAN socketa");
@@ -155,10 +157,10 @@ int main(void)
         printf("\n[CAN->Modbus] EXT ID=0x%08X | GW=%d Slave=%d FC=0x%02X Reg=0x%04X Val=0x%04X\n",
                ext_id, gw_id, modbus_addr, fc, reg_addr, reg_value);
 
-        /* ----------------------------------------------------------------
+        /* 
          * Postavljanje adrese slave uredjaja i slanje Modbus komande.
          * libmodbus automatski upravlja CRC-om i RS-485 smerom (custom RTS).
-         * ---------------------------------------------------------------- */
+        */
         modbus_set_slave(ctx, modbus_addr);
 
         int ret = -1;
