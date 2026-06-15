@@ -13,13 +13,15 @@ Cilj projektnog zadatka je projektovanj gateway-a koji prima CAN okvire sa 29-bi
 
 Glavni izazov projektnog zadatka je mapiranje adresa i funkcijskih kodova Modbus protokola u prošireni (29-bitni) CAN ID. Potrebno je obratiti pažnju na ono što je neopphodno. Pošto Modbus RTU podržava do 247 slave uređaja za Modbus adresu potreban je 1 bajt. Takođe, funkcijski kodovi su definisani standardom i kako bi se pokrile sve moguće kombinacije za to polje je potreban 1 bajt. Pitanje je kako raspodijeliti ostalih 14 bitova na polje PRIORITY i GATEWAY ID.
 Ova dva polja su fleksibilna po pitanju broja potrebnih bitova. GATEWAY ID predstavlja jedinstveni identifikator samog uređaja u CAN mreži na kojem se vrti data aplikacija. U ovoj realizaciji, kako se bajtovi ne bi "skraćivali", za ovo polje ostavljeno je 8 bitova, što je dovoljno za registrovanje do 256 gateway-a. To je i više nego dovoljan broj za standardnu CAN infrastrukturu. Za polje PRIORITY ostaju rezervisano 5 bitova i omogućeno je da se u isto vrijeme šalju do 32 okvira sa različitim prioritetom. Polja EFF CAN ID-a su raspoređena na sljedeći način:
-
 ```
- Bit: 28      24 23      16 15       8 7        0
-      [PRIORITET] [MODBUS ADR] [FUNK. KOD] [GW ID]
-        5 bita      8 bita      8 bita     8 bita
++----------+---------------+---------------+---------------+
+|  28  24  |  23       16  |  15        8  |  7         0  |
++----------+---------------+---------------+---------------+
+| PRIORITY |  MODBUS ADDR  | FUNCTION CODE |  GATEWAY ID   |
++----------+---------------+---------------+---------------+
+|  5 bita  |    8 bita     |    8 bita     |    8 bita     |
++----------+---------------+---------------+---------------+
 ```
-
 CAN payload (4 bajta) nosi Modbus PDU podatke:
 
 | Bajt | Sadržaj             |
@@ -39,8 +41,8 @@ CAN payload (4 bajta) nosi Modbus PDU podatke:
 | 0x03 | Read Holding Registers   | `modbus_read_registers()` |
 | 0x05 | Write Single Coil        | `modbus_write_bit()`      |
 | 0x06 | Write Single Register    | `modbus_write_register()` |
-
-## Ključni segmenti koda
+#
+## Makroi za dekompoziciju CAN ID-a
 
 ```sh
 ...
@@ -70,7 +72,7 @@ static void custom_set_rts(modbus_t *ctx, int on)
         write(fd, on ? "1" : "0", 1);
         close(fd);
     }
-    usleep(2000); // Kratka pauza za hardversku stabilizaciju napona na liniji
+    usleep(2000); 
 }
 ...
 ```
@@ -85,19 +87,16 @@ modbus_set_slave(ctx, modbus_addr);
 
         int ret = -1;
         switch (fc) {
-            case 0x01: {
-                /* FC01: Citanje coils (digitalnih izlaza) */
+           case 0x01: {
                 uint8_t bits[8];
                 ret = modbus_read_bits(ctx, reg_addr, reg_value, bits);
                 if (ret > 0) {
                     printf("[Modbus] FC01: procitano %d coil(s), prvi=0x%02X\n", ret, bits[0]);
-
                     struct can_frame resp;
                     resp.can_id  = frame.can_id; 
                     resp.can_dlc = (ret > 8) ? 8 : ret;
                     int i;
-                    for (i = 0; i < resp.can_dlc; i++)
-                        resp.data[i] = bits[i];
+                    for (i = 0; i < resp.can_dlc; i++) resp.data[i] = bits[i];
                     write(can_sock, &resp, sizeof(struct can_frame));
                 }
                 break;
@@ -159,7 +158,7 @@ Nakon toga interfejs je aktivan i može se pristupiti pokretanju aplikacije.
 Nakon što je gateway pokrenut i sluša saobraćaj na `can0` i nakon što je hardver spojen, pristupa se slanju sirovih okvira pomoću standardnih `can-utils` alata sa drugog čvora u mreži. Na jednom uređaju preko `candump` alata se može pratiti tok poruka, dok će gateway ispisivati prevod.
 
 ### Primjer 1: Uključivanje Releja #0
-Želimo da pošaljemo komandu uređaju da na adresi 1, funkcijskim kodom `0x05` na prvi registar `0x0000`. Ciljani prioritet je `5` (nije toliko važno jer se šalje samo jedan zahtjev), a Gateway Id je `0x10` (isto nije od pretjerane važnosti jer su samo 2 uređaja na CAN magistrali). CAN ID u završnici ima oblik `0x05010510`. Poruka se šalje sa uređaja koji je samo spojen na magistralu, ne i na slave uređaj.
+Želimo da pošaljemo komandu Modbus uređaju sa adresom 1, koriste'i funkcijski kod `0x05`za upis na prvi registar `0x0000`. Ciljani prioritet je `5` (nije toliko važno jer se šalje samo jedan zahtjev), a Gateway Id je `0x10` (isto nije od pretjerane važnosti jer su samo 2 uređaja na CAN magistrali). CAN ID u završnici ima oblik `0x05010510`. Poruka se šalje sa uređaja koji je samo spojen na magistralu, ne i na slave uređaj.
 
 
 ```sh
@@ -171,7 +170,7 @@ Očekivani ispis na gateway terminalu izgleda ovako:
 
 ```sh
 [CAN -> Modbus] EXT ID=0x05010510 | GW=16 Slave=1 FC=0x05 Reg=0x0000 Val=0xFF00
-[Modbus] FC05: Coil 0x0000 postavljen na 0.
+[Modbus] FC05: Coil 0x0000 postavljen na 1.
 
 ```
 što nam govori sve potrebne podatke o uspješnosti poruke koja je poslata.
@@ -194,10 +193,19 @@ Dakle u CAN ID je samo promjenjen funkcijski kod sa `0x05` u `0x06` i podatak ko
 [Modbus] FC06: Registar 0x0001 postavljen na 0x0001.
 
 ```
+### Primjer 3: Slanje RTR (Remote Tansmission Request) zahtjeva
+Ostalo je još da se obradi slučaj slanja RTR zahtjeva. U slučaju prijema RTR okvira `is_rtr == 1`, gateway ne čita payload (jer je prazan), već vrši dekompoziciju 29 bit-nog CAN ID kako bi rekonstruisao Modbus komandu. Na osnovu funkcijskog koda, gateway mapira CAN RTR na odgovarajuću `libmodbus` funkciju. Postoje dva scenarija: `FC=0x01 (Read Coils)` - zahtjev za čitanje stanja releja i `FC=0x03 (Read Holding Register)` - zahtjev za čitanje vrijednosti registra. Primjer komunikacije: Slanje RTR zahtjeva za čitanje 4 bajta sa uređaja (Slave=1, FC=0x01, GW_ID=10):
 
+```sh
+cansend can0 05010110#R4
 
+```
+Izlaz na candump can0 prikazuje da je gateway uspješno vratio regularni paket sa stanjem gdje je npr. samo treći relej uključen:
+```sh
+can0  05010110   [4]  00 00 01 00
 
-
+```
+Demonstrativni video se nalazi na linku (link).
 
 
 
