@@ -22,27 +22,22 @@
 #define MODBUS_DATABITS 8
 #define MODBUS_STOPBITS 1
 
-#define CAN_ID_PRIORITY(id)      (((id) >> 24) & 0x1F) // Izoluje prvih 5 bita prioriteta
-#define CAN_ID_MODBUS_ADDR(id)   (((id) >> 16) & 0xFF) // Izoluje 8 bita slave adrese
-#define CAN_ID_FUNCTION_CODE(id) (((id) >>  8) & 0xFF) // Izoluje 8 bita funkcijskog koda
-#define CAN_ID_GATEWAY_ID(id)    (((id)       ) & 0xFF) // Izoluje zadnji bajt (Gateway ID)
+#define CAN_ID_PRIORITY(id)      (((id) >> 24) & 0x1F)
+#define CAN_ID_MODBUS_ADDR(id)   (((id) >> 16) & 0xFF)
+#define CAN_ID_FUNCTION_CODE(id) (((id) >>  8) & 0xFF)
+#define CAN_ID_GATEWAY_ID(id)    (((id)       ) & 0xFF)
  
 #define MIN_CAN_PAYLOAD 4
 
-/* -----------------------------------------------------------------------
- * Inicijalizacija GPIO pina preko sysfs-a 
- * ----------------------------------------------------------------------- */
 static void init_gpio(void)
 {
     int fd;
-
     fd = open("/sys/class/gpio/export", O_WRONLY);
     if (fd >= 0) {
         write(fd, GPIO_DE_PIN, strlen(GPIO_DE_PIN));
         close(fd);
     }
     usleep(50000); 
-
     fd = open(GPIO_DIR_PATH, O_WRONLY);
     if (fd >= 0) {
         write(fd, "out", 3);
@@ -50,10 +45,6 @@ static void init_gpio(void)
     }
 }
 
-/* -----------------------------------------------------------------------
- * Funkcija za kontrolu smjera RS-485 transivera.
- * Registruje se sa modbus_rtu_set_custom_rts() 
- * ----------------------------------------------------------------------- */
 static void custom_set_rts(modbus_t *ctx, int on)
 {
     int fd = open(GPIO_VAL_PATH, O_WRONLY);
@@ -71,15 +62,12 @@ int main(void)
     struct ifreq ifr;
     struct can_frame frame;
     struct can_filter rfilter[1];
-
     modbus_t *ctx;
 
     printf("Inicijalizacija CAN-Modbus RTU Gejtveja...\n");
-
     init_gpio();
 
     ctx = modbus_new_rtu(UART_PORT, MODBUS_BAUDRATE, MODBUS_PARITY, MODBUS_DATABITS, MODBUS_STOPBITS);
-    
     if (ctx == NULL) {
         fprintf(stderr, "Greska: Nije moguce kreirati libmodbus kontekst!\n");
         return -1;
@@ -89,8 +77,7 @@ int main(void)
     modbus_rtu_set_custom_rts(ctx, custom_set_rts);
 
     if (modbus_connect(ctx) == -1) {
-        fprintf(stderr, "Greska: Modbus veza nije uspostavljena: %s\n",
-                modbus_strerror(errno));
+        fprintf(stderr, "Greska: Modbus veza nije uspostavljena: %s\n", modbus_strerror(errno));
         modbus_free(ctx);
         return -1;
     }
@@ -117,7 +104,6 @@ int main(void)
         return -1;
     }
 
-    // Filtriramo samo prosirene EFF okvire
     rfilter[0].can_id   = CAN_EFF_FLAG;
     rfilter[0].can_mask = CAN_EFF_FLAG;
     setsockopt(can_sock, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter));
@@ -135,9 +121,7 @@ int main(void)
             continue;
         }
 
-        // Provjera da li je u pitanju RTR okvir (zahtjev za citanje bez payload-a)
         int is_rtr = (frame.can_id & CAN_RTR_FLAG) ? 1 : 0;
-
         unsigned int ext_id       = frame.can_id & CAN_EFF_MASK;
         unsigned char modbus_addr = CAN_ID_MODBUS_ADDR(ext_id);
         unsigned char fc          = CAN_ID_FUNCTION_CODE(ext_id);
@@ -149,25 +133,34 @@ int main(void)
         if (is_rtr) {
             printf("\n[RTR UPIT] Primljen zahtjev za citanje! Slave=%d FC=0x%02X\n", modbus_addr, fc);
             
-            if (fc == 0x01) { // RTR zahtjev za citanje stanja releja (Coils)
-                uint8_t bits[4];
-                ret = modbus_read_bits(ctx, 0x0000, 4, bits); // Citamo pocetna 4 releja
-                if (ret > 0) {
-                    struct can_frame resp;
-                    resp.can_id = ext_id | CAN_EFF_FLAG; // Vracamo regularan EFF okvir (bez RTR flega)
-                    resp.can_dlc = 4;
-                    for (int i = 0; i < 4; i++) resp.data[i] = bits[i];
+            if (fc == 0x01) {
+                struct can_frame resp;
+                resp.can_id = ext_id | CAN_EFF_FLAG;
+                resp.can_dlc = 4;
+                int i;
+                int greska = 0;
+                for (i = 0; i < 4; i++) {
+                    uint8_t pojedinacni_bit = 0;
+                    ret = modbus_read_bits(ctx, 0x0000 + i, 1, &pojedinacni_bit);
+                    if (ret > 0) {
+                        resp.data[i] = pojedinacni_bit;
+                    } else {
+                        greska = 1;
+                        break;
+                    }
+                }
+                if (!greska) {
                     write(can_sock, &resp, sizeof(struct can_frame));
-                    printf("[RTR ODGOVOR] Poslato trenutno stanje releja na CAN.\n");
+                    printf("[RTR ODGOVOR] Uspjesno poslato pojedinacno stanje za 4 releja.\n");
                 }
             }
-            else if (fc == 0x03) { // RTR zahtjev za citanje holding registara
+            else if (fc == 0x03) {
                 uint16_t regs[2];
-                ret = modbus_read_registers(ctx, 0x0000, 2, regs); // Citamo prva 2 registra
+                ret = modbus_read_registers(ctx, 0x0000, 2, regs);
                 if (ret > 0) {
                     struct can_frame resp;
                     resp.can_id = ext_id | CAN_EFF_FLAG;
-                    resp.can_dlc = 4; // 2 registra * 2 bajta = 4 bajta saobracaja
+                    resp.can_dlc = 4;
                     resp.data[0] = (regs[0] >> 8) & 0xFF;
                     resp.data[1] = regs[0] & 0xFF;
                     resp.data[2] = (regs[1] >> 8) & 0xFF;
@@ -183,12 +176,9 @@ int main(void)
             if (ret < 0) {
                 fprintf(stderr, "Greska Modbus RTR komunikacije: %s\n", modbus_strerror(errno));
             }
-            continue; // Zavrsavamo obradu RTR-a i idemo na sljedeci CAN okvir
+            continue; 
         }
 
-        /* -----------------------------------------------------------------------
-         * Standardni rezim: Obrada regularnih CAN okvira sa podacima (Payload)
-         * ----------------------------------------------------------------------- */
         if (frame.can_dlc < MIN_CAN_PAYLOAD) {
             fprintf(stderr, "Greska: CAN okvir nema dovoljno bajtova za Modbus PDU (dlc=%d).\n", frame.can_dlc);
             continue;
@@ -202,7 +192,6 @@ int main(void)
 
         switch (fc) {
             case 0x01: {
-                /* FC01: Citanje coils (digitalnih izlaza) */
                 uint8_t bits[8];
                 ret = modbus_read_bits(ctx, reg_addr, reg_value, bits);
                 if (ret > 0) {
@@ -210,29 +199,25 @@ int main(void)
                     struct can_frame resp;
                     resp.can_id  = frame.can_id; 
                     resp.can_dlc = (ret > 8) ? 8 : ret;
-                    for (int i = 0; i < resp.can_dlc; i++) resp.data[i] = bits[i];
+                    int i;
+                    for (i = 0; i < resp.can_dlc; i++) resp.data[i] = bits[i];
                     write(can_sock, &resp, sizeof(struct can_frame));
                 }
                 break;
             }
             case 0x05:
-                /* FC05: Pisanje jednog digitalnog izlaza */
                 ret = modbus_write_bit(ctx, reg_addr, (reg_value != 0) ? 1 : 0);
                 if (ret == 1)
-                    printf("[Modbus] FC05: Coil 0x%04X postavljen na %d.\n",
-                           reg_addr, (reg_value != 0) ? 1 : 0);
+                    printf("[Modbus] FC05: Coil 0x%04X postavljen na %d.\n", reg_addr, (reg_value != 0) ? 1 : 0);
                 break;
 
             case 0x06:
-                /* FC06: Pisanje jednog holding registra */
                 ret = modbus_write_register(ctx, reg_addr, reg_value);
                 if (ret == 1)
-                    printf("[Modbus] FC06: Registar 0x%04X postavljen na 0x%04X.\n",
-                           reg_addr, reg_value);
+                    printf("[Modbus] FC06: Registar 0x%04X postavljen na 0x%04X.\n", reg_addr, reg_value);
                 break;
 
             case 0x03: {
-                /* FC03: Citanje holding registara */
                 uint16_t regs[8];
                 ret = modbus_read_registers(ctx, reg_addr, reg_value, regs);
                 if (ret > 0) {
@@ -241,7 +226,8 @@ int main(void)
                     resp.can_id  = frame.can_id;
                     int n = (ret > 4) ? 4 : ret;
                     resp.can_dlc = n * 2;
-                    for (int i = 0; i < n; i++) {
+                    int i;
+                    for (i = 0; i < n; i++) {
                         resp.data[i * 2]     = (regs[i] >> 8) & 0xFF;
                         resp.data[i * 2 + 1] = regs[i] & 0xFF;
                     }
@@ -249,8 +235,6 @@ int main(void)
                 }
                 break;
             }
-
-}
             default:
                 fprintf(stderr, "Upozorenje: Nepodrzani funkcijski kod FC=0x%02X.\n", fc);
                 continue;
