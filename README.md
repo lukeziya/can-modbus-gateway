@@ -205,7 +205,7 @@ Izlaz na candump can0 prikazuje da je gateway uspješno vratio regularni paket s
 can0  05010110   [4]  00 00 01 00
 
 ```
-Demonstrativni video se nalazi na linku (link).
+Demonstrativni video se nalazi na linku (https://youtu.be/zizHeoMEzKg).
 
 
 
