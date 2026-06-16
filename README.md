@@ -6,12 +6,14 @@
 
 
 ## Opis projekta
+U modernim industrijskim okruženjima, heterogenost mreža predstavlja jedan od najvećih integracionih izazova. CAN (Controller Area Network) protokol je dominantan u automobilskoj industriji, robotici i automatizaciji robusnih ugrađenih sistema zbog svoje determinističke prirode i visoke otpornosti na smetnje. S druge strane, Modbus RTU (preko RS-485 fizickog sloja) predstavlja zlatni standard za komunikaciju sa industrijskim senzorima, aktuatorima i PLC uređajima zbog svoje jednostavnosti i niske cijene implementacije.
 
-Cilj projektnog zadatka je projektovanj gateway-a koji prima CAN okvire sa 29-bitnim (EFF) identifikatorom, dekodira Modbus parametre ugrađene u taj identifikator i prosljeđuje odgovarajuće komande Modbus RTU slave uređaju (4-kanalni relejni modul) preko RS-485 magistrale.
+Predmet ovog projektnog zadatka je projektovanje i realizacija pametnog CAN-Modbus RTU gejtveja baziranog na Raspberry Pi platformi. Ovaj uređaj djeluje kao translator protokola u realnom vremenu, omogućavajući čvorovima na CAN magistrali da transparentno upravljaju i čitaju stanja izvršnih Modbus RTU uređaja bez poznavanja detalja Modbus serijske komunikacije.
+Cilj projektnog zadatka je projektovanje gateway-a koji prima CAN okvire sa 29-bitnim (EFF) identifikatorom, dekodira Modbus parametre ugrađene u taj identifikator i prosljeđuje odgovarajuće komande Modbus RTU slave uređaju (4-kanalni relejni modul) preko RS-485 magistrale.
 
 ## Izazovi 
 
-Glavni izazov projektnog zadatka je mapiranje adresa i funkcijskih kodova Modbus protokola u prošireni (29-bitni) CAN ID. Potrebno je obratiti pažnju na ono što je neopphodno. Pošto Modbus RTU podržava do 247 slave uređaja za Modbus adresu potreban je 1 bajt. Takođe, funkcijski kodovi su definisani standardom i kako bi se pokrile sve moguće kombinacije za to polje je potreban 1 bajt. Pitanje je kako raspodijeliti ostalih 14 bitova na polje PRIORITY i GATEWAY ID.
+Glavni izazov projektnog zadatka je mapiranje adresa i funkcijskih kodova Modbus protokola u prošireni (29-bitni) CAN ID. Potrebno je obratiti pažnju na ono što je neophodno. Pošto Modbus RTU podržava do 247 slave uređaja za Modbus adresu potreban je 1 bajt. Takođe, funkcijski kodovi su definisani standardom i kako bi se pokrile sve moguće kombinacije za to polje je potreban 1 bajt. Pitanje je kako raspodijeliti ostalih 14 bitova na polje PRIORITY i GATEWAY ID.
 Ova dva polja su fleksibilna po pitanju broja potrebnih bitova. GATEWAY ID predstavlja jedinstveni identifikator samog uređaja u CAN mreži na kojem se vrti data aplikacija. U ovoj realizaciji, kako se bajtovi ne bi "skraćivali", za ovo polje ostavljeno je 8 bitova, što je dovoljno za registrovanje do 256 gateway-a. To je i više nego dovoljan broj za standardnu CAN infrastrukturu. Za polje PRIORITY ostaju rezervisano 5 bitova i omogućeno je da se u isto vrijeme šalju do 32 okvira sa različitim prioritetom. Polja EFF CAN ID-a su raspoređena na sljedeći način:
 ```
 +----------+---------------+---------------+---------------+
@@ -140,7 +142,7 @@ modbus_set_slave(ctx, modbus_addr);
 ```
 ## Priprema za pokretanje aplikacije
 
-Kakko bi sve funkcionisalo kako treba potrebno je povezati dva Raspberry Pi-a na jednu CAN magistralu. U ovom slučaju korišćeni su RS-485 CAN HAT-ovi gdje su CAN_H i CAN_L linije spojene paralelno. Pošto je u pitanju gateway, on će da radi samo na jednom uređaju te je na njega potrebno spojiti Modbus RTU slave čvor. Njega spajamo na A i B kontakte na RS-485 HAT-u. Dakle sa jedne strane gateway-a je jedan uređaj u CAN magistrali sa kojeg šaljemo CAN okvire, dok je sa druge strane Modbus slave uređaj koji preko gatway-a prima odogovarajuće poruke i izvršava zadate funkcije, te vraća potvrdu istim putem.
+Kako bi sve funkcionisalo kako treba, potrebno je povezati dva Raspberry Pi-a na jednu CAN magistralu. U ovom slučaju korišteći RS-485 CAN HAT-ove, gdje su CAN_H i CAN_L linije spojene paralelno. Pošto je u pitanju gateway, on će da radi samo na jednom uređaju te je na njega potrebno spojiti Modbus RTU slave čvor. Njega spajamo na A i B kontakte na RS-485 HAT-u. Dakle sa jedne strane gateway-a je jedan uređaj u CAN magistrali sa kojeg šaljemo CAN okvire, dok je sa druge strane Modbus slave uređaj koji preko gatway-a prima odogovarajuće poruke i izvršava zadate funkcije, te vraća potvrdu istim putem.
 ## Konfiguracija i podizanje interfejsa
 
 Na ciljnoj platformi potrebno je (uz pretpostavku da je interfejs inicijalizovan) podignuti link za can0 sljedećom komandom:
