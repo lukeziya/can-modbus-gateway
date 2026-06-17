@@ -81,7 +81,7 @@ static void custom_set_rts(modbus_t *ctx, int on)
 
 ## Reaktivna petlja i izvršavanje komandi
 
-Srce gejtveja predstavlja `switch-case` arhitektura unutar glavne petlje koja na osnovu dekodiranog funkcijskog koda `fc` poziva odgovarajući libmodbus API:
+Srce gateway-a predstavlja `switch-case` arhitektura unutar glavne petlje koja na osnovu dekodiranog funkcijskog koda `fc` poziva odgovarajući libmodbus API:
 ```sh
 ...
 
@@ -142,7 +142,7 @@ modbus_set_slave(ctx, modbus_addr);
 ```
 ## Priprema za pokretanje aplikacije
 
-Kako bi sve funkcionisalo kako treba, potrebno je povezati dva Raspberry Pi-a na jednu CAN magistralu. U ovom slučaju korišteći RS-485 CAN HAT-ove, gdje su CAN_H i CAN_L linije spojene paralelno. Pošto je u pitanju gateway, on će da radi samo na jednom uređaju te je na njega potrebno spojiti Modbus RTU slave čvor. Njega spajamo na A i B kontakte na RS-485 HAT-u. Dakle sa jedne strane gateway-a je jedan uređaj u CAN magistrali sa kojeg šaljemo CAN okvire, dok je sa druge strane Modbus slave uređaj koji preko gatway-a prima odogovarajuće poruke i izvršava zadate funkcije, te vraća potvrdu istim putem.
+Kako bi sve funkcionisalo, potrebno je povezati dva Raspberry Pi-a na jednu CAN magistralu. U ovom slučaju korišteći RS-485 CAN HAT-ove, gdje su CAN_H i CAN_L linije spojene paralelno. Pošto je u pitanju gateway, on će da radi samo na jednom uređaju te je na njega potrebno spojiti Modbus RTU slave čvor. Njega spajamo na A i B kontakte na RS-485 HAT-u. Dakle sa jedne strane gateway-a je jedan uređaj u CAN magistrali sa kojeg šaljemo CAN okvire, dok je sa druge strane Modbus slave uređaj koji preko gatway-a prima odogovarajuće poruke i izvršava zadate funkcije, te vraća potvrdu istim putem.
 ## Konfiguracija i podizanje interfejsa
 
 Na ciljnoj platformi potrebno je (uz pretpostavku da je interfejs inicijalizovan) podignuti link za can0 sljedećom komandom:
@@ -157,10 +157,10 @@ Nakon toga interfejs je aktivan i može se pristupiti pokretanju aplikacije.
 
 ## Očekivani rad aplikacije 
 
-Nakon što je gateway pokrenut i sluša saobraćaj na `can0` i nakon što je hardver spojen, pristupa se slanju sirovih okvira pomoću standardnih `can-utils` alata sa drugog čvora u mreži. Na jednom uređaju preko `candump` alata se može pratiti tok poruka, dok će gateway ispisivati prevod.
+Nakon što je gateway pokrenut i sluša saobraćaj na `can0` i nakon što je hardver spojen, pristupa se slanju sirovih okvira pomoću standardnih `can-utils` alata sa drugog čvora u mreži. Na jednom uređaju preko `candump` alata se može pratiti tok poruka, dok će gateway ispisivati prevod i dijagnostičke informacije.
 
 ### Primjer 1: Uključivanje Releja #0
-Želimo da pošaljemo komandu Modbus uređaju sa adresom 1, koriste'i funkcijski kod `0x05`za upis na prvi registar `0x0000`. Ciljani prioritet je `5` (nije toliko važno jer se šalje samo jedan zahtjev), a Gateway Id je `0x10` (isto nije od pretjerane važnosti jer su samo 2 uređaja na CAN magistrali). CAN ID u završnici ima oblik `0x05010510`. Poruka se šalje sa uređaja koji je samo spojen na magistralu, ne i na slave uređaj.
+Želimo da pošaljemo komandu Modbus uređaju sa adresom 1, koristeći funkcijski kod `0x05`za upis na prvi registar `0x0000`. Ciljani prioritet je `5` (nije toliko važno jer se šalje samo jedan zahtjev), a Gateway Id je `0x10` (isto nije od pretjerane važnosti jer su samo 2 uređaja na CAN magistrali). CAN ID u završnici ima oblik `0x05010510`. Poruka se šalje sa uređaja koji je samo spojen na magistralu, ne i na slave uređaj.
 
 
 ```sh
@@ -196,7 +196,7 @@ Dakle u CAN ID je samo promjenjen funkcijski kod sa `0x05` u `0x06` i podatak ko
 
 ```
 ### Primjer 3: Slanje RTR (Remote Tansmission Request) zahtjeva
-Ostalo je još da se obradi slučaj slanja RTR zahtjeva. U slučaju prijema RTR okvira `is_rtr == 1`, gateway ne čita payload (jer je prazan), već vrši dekompoziciju 29 bit-nog CAN ID kako bi rekonstruisao Modbus komandu. Na osnovu funkcijskog koda, gateway mapira CAN RTR na odgovarajuću `libmodbus` funkciju. Postoje dva scenarija: `FC=0x01 (Read Coils)` - zahtjev za čitanje stanja releja i `FC=0x03 (Read Holding Register)` - zahtjev za čitanje vrijednosti registra. Primjer komunikacije: Slanje RTR zahtjeva za čitanje 4 bajta sa uređaja (Slave=1, FC=0x01, GW_ID=10):
+U slučaju prijema RTR okvira `is_rtr == 1`, gateway ne čita payload (jer je prazan), već vrši dekompoziciju 29 bit-nog CAN ID kako bi rekonstruisao Modbus komandu. Na osnovu funkcijskog koda, gateway mapira CAN RTR na odgovarajuću `libmodbus` funkciju. Postoje dva scenarija: `FC=0x01 (Read Coils)` - zahtjev za čitanje stanja releja i `FC=0x03 (Read Holding Register)` - zahtjev za čitanje vrijednosti registra. Primjer komunikacije: Slanje RTR zahtjeva za čitanje 4 bajta sa uređaja (Slave=1, FC=0x01, GW_ID=10):
 
 ```sh
 cansend can0 05010110#R4
@@ -207,7 +207,33 @@ Izlaz na candump can0 prikazuje da je gateway uspješno vratio regularni paket s
 can0  05010110   [4]  00 00 01 00
 
 ```
-Demonstrativni video se nalazi na linku (https://youtu.be/zizHeoMEzKg).
+### Primjer 4: Čitanje sistemskih registara
+Čitanje registra rezervisanog za sistemsku brzinu (baud rate) `0x0001`:
+```sh
+cansend can0 05010310#00010001
+```
+Šaljemo funkcijski kod `0x03` koji gateway-u govori da zavtjevano čitanje registra sa adresom `0x0001` i tražimo čitnaje samo jednog registra. Na `candump` dobijamo sljedeći ispis:
+```sh
+can0  05010310   [2]  00 00
+
+```
+Podaci vraćeni na CAN magistralu ukazuju na to da je Modbus slave uspješno primio zahtjev, obradio ga i poslao nazad vrijednost u registru na zahtjevanoj adresi. Vrijednost `0x0000` označava da je upisana default vrijednost od 9600 bps.
+
+### Primjer 5: Čitanje stanja releja
+
+Ako ipak nije potrebno da pročitamo stanje sva četiri releja (što je moguće slanje RTR zahtjeva), pomoću funkcijskog koda `0x01` možemo zahtjevati stanje samo jednog releja koji adresiramo. Primjer komunikacije je:
+```sh
+cansend can0 05010110#00010001
+```
+Šaljemo dati funkcijski kod, adresiramo relej `0x0001` i tražimo samo jedan bajt kao potvrdu. Odgovor:
+```sh
+can0  05010110   [1]  00 
+
+```
+U odogovoru, vrijednost poslanog bajta će biti ili 0x00 (ako je relej ugašen), odnosno 0x01 (ako je upaljen).
+Demonstrativni video se nalazi na linku (https://youtu.be/zizHeoMEzKg). 
+> [!NOTE]
+> Na snimku, lijevi terminal predstavlja uređaj na kojem je pokrenut gateway, te je on takođe spojen sa Modbus RTU slave uređajem. Desna dva terminala su pokrenuta na drugoj ciljnoj platformi koja služi za slanje poruka i praćenje CAN magistrale.
 
 
 
