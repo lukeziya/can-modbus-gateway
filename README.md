@@ -231,7 +231,7 @@ can0  05010110   [1]  00
 
 ```
 U odogovoru, vrijednost poslanog bajta će biti ili 0x00 (ako je relej ugašen), odnosno 0x01 (ako je upaljen).
-Demonstrativni video se nalazi na linku (https://youtu.be/zizHeoMEzKg). 
+Demonstrativni video se nalazi na linku (https://www.youtube.com/watch?v=kz9Add-w940). 
 > [!NOTE]
 > Na snimku, lijevi terminal predstavlja uređaj na kojem je pokrenut gateway, te je on takođe spojen sa Modbus RTU slave uređajem. Desna dva terminala su pokrenuta na drugoj ciljnoj platformi koja služi za slanje poruka i praćenje CAN magistrale.
 
